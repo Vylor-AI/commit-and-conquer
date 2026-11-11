@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Git &amp; Conquer: Total Refactor!</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Git &amp; Conquer: Total Refactor!" />
+    <meta
+      property="og:description"
+      content="The Ultimate Codebase Territorial War."
+    />
+    <meta property="og:image" content="/brand/og-git-conquer.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Git &amp; Conquer: Total Refactor!" />
+    <meta
+      name="twitter:description"
+      content="The Ultimate Codebase Territorial War."
+    />
+    <meta name="twitter:image" content="/brand/og-git-conquer.png" />
+    <link rel="icon" href="favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="favicon-32x32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="favicon-16x16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="stylesheet" href="styles/main.css" />
+    <style>
+      #gc-header-branding {
+        position: absolute;
+        left: 28px;
+        top: 18px;
+        z-index: 22;
+        display: inline-flex;
+        align-items: center;
+        text-decoration: none;
+      }
+
+      #gc-header-logo {
+        display: block;
+        width: auto;
+        height: 34px;
+      }
+
+      /* Map watermark logo */
+      #gc-map-branding {
+        position: absolute;
+        left: 440px;
+        bottom: 120px;
+        z-index: 8;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        pointer-events: none;
+      }
+
+      #gc-map-logo {
+        display: block;
+        width: auto;
+        height: 48px;
+        opacity: 0.9;
+      }
+
+      #settings-btn {
+        position: absolute;
+        top: 80px;
+        right: 32px;
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        border: 1px solid rgba(129, 194, 255, 0.5);
+        background: rgba(16, 24, 38, 0.88);
+        color: #e8f1ff;
+        font-size: 18px;
+        cursor: pointer;
+        z-index: 20;
+      }
+
+      #settings-btn:hover {
+        background: rgba(35, 52, 76, 0.92);
+      }
+    </style>
+    <script src="mapper.js"></script>
+  </head>
+  <body>
+    <div id="game-container">
+      <a id="gc-header-branding" href="/" aria-label="Git & Conquer home">
+        <img
+          id="gc-header-logo"
+          src="brand/git-conquer-lockup.png"
+          alt="Git & Conquer"
+        />
+      </a>
+
+      <button id="settings-btn" aria-label="Open settings" title="Settings">
+        ⚙
+      </button>
+
+      <div id="mode-switch" aria-label="Score mode">
+        <button id="mode-total-btn" class="mode-btn active">
+          Total Empire
+        </button>
+        <button id="mode-monthly-btn" class="mode-btn">
+          Monthly Conquered
+        </button>
+        <button id="mode-quarterly-btn" class="mode-btn">
+          Quarterly Conquered
+        </button>
+      </div>
+
+      <div id="zoom-hud">1 BLOCK = 100 LOC</div>
+      <canvas id="battleCanvas"></canvas>
+
+      <div id="gc-map-branding" aria-hidden="true">
+        <img id="gc-map-logo" src="brand/git-conquer-mark.png" alt="" />
+      </div>
+
+      <button
+        id="onboarding-info-btn"
+        class="hidden"
+        aria-label="What is Git & Conquer?"
+      >
+        ⓘ
+      </button>
+
+      <aside id="onboarding-panel" class="hidden" aria-live="polite">
+        <h2>Git &amp; Conquer: Total Refactor!</h2>
+        <p class="intro-muted">
+          The Ultimate Codebase Territorial War. A live, gamified arena tracking
+          how your codebase grows, evolves, and changes hands over time.
+        </p>
+
+        <h3>The Golden Rule</h3>
+        <p>
+          Raw commit volume means nothing. This board runs on live Git Blame
+          data.
+        </p>
+
+        <h3>Your Color is Your Empire</h3>
+        <p>
+          Every block on the map represents surviving lines of code currently
+          standing in production.
+        </p>
+
+        <h3>The Slashing of Empires</h3>
+        <p>
+          Anyone can drop 1,000 lines of messy boilerplate to flash-paint the
+          map. But if another engineer refactors that bloated module down to 10
+          beautiful, surgical lines, that old empire disappears from the grid.
+        </p>
+
+        <h3>The Ultimate Foundation</h3>
+        <p>
+          Build modular, clean, and bulletproof logic. When your code is solid,
+          future features are built on top of your territory instead of tearing
+          it down—securing your legacy.
+        </p>
+
+        <p style="margin-top: 10px">
+          Hit Play to watch the rise and fall of your team's digital kingdoms.
+          Who is going to conquer the bricks?
+        </p>
+
+        <div id="onboarding-actions">
+          <button id="onboarding-play-btn" type="button">Play</button>
+        </div>
+      </aside>
+
+      <div id="timeline-controls">
+        <button id="play-pause-btn" class="ctrl-btn">Pause</button>
+        <input type="range" id="timeline-slider" min="0" value="0" step="1" />
+        <select id="speed-select">
+          <option value="0.2">Paced</option>
+          <option value="0.6" selected>Normal Speed</option>
+          <option value="1.5">Accelerated</option>
+          <option value="3.0">Hyper Blitz</option>
+        </select>
+        <span id="timeline-counter">LOADING</span>
+      </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="scripts/analytics.js"></script>
+    <script src="scripts/state.js"></script>
+    <script src="scripts/world.js"></script>
+    <script src="scripts/simulation.js"></script>
+    <script src="scripts/render.js"></script>
+    <script src="scripts/controls.js"></script>
+    <script src="scripts/onboarding.js"></script>
+
+    <script src="scripts/history-normalizer.js"></script>
+    <script src="scripts/history-storage.js"></script>
+    <script src="scripts/profile-config.js"></script>
+    <script src="scripts/import-ui.js"></script>
+    <script src="scripts/history-bootstrap.js"></script>
+    <script src="scripts/settings-ui.js"></script>
+    <script src="scripts/app.js"></script>
+  </body>
+</html>
