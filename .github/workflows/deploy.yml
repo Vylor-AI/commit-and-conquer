@@ -1,0 +1,50 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - develop
+      - master
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target deployment environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.environment || (github.ref_name == 'master' && 'production' || 'staging') }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || (github.ref_name == 'master' && 'production' || 'staging') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare static bundle
+        env:
+          AMPLITUDE_API_KEY: ${{ secrets.AMPLITUDE_API_KEY || vars.AMPLITUDE_API_KEY }}
+        run: |
+          test -d public
+          mkdir -p dist
+          cp -a public/. dist/
+          printf 'window.AMPLITUDE_API_KEY = "%s";\n' "$AMPLITUDE_API_KEY" > dist/config.js
+
+      - name: Deploy to S3 and invalidate CloudFront
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || vars.AWS_DEFAULT_REGION }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET || vars.S3_BUCKET }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID || vars.CLOUDFRONT_DISTRIBUTION_ID }}
+          BUILD_DIR: dist
+        run: |
+          sed -i 's/\r$//' ci/deploy.sh
+          chmod +x ci/deploy.sh
+          ci/deploy.sh
+
