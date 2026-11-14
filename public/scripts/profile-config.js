@@ -318,7 +318,10 @@
       return {
         date: step && step.date ? step.date : "",
         committer: resolveCanonicalNameWithMap(step && step.committer, mergeMap),
-        repo: step && step.repo ? step.repo : "vylor",
+        repo:
+          step && step.repo
+            ? step.repo
+            : window.CNC_DEFAULT_REPO || "default",
         changes:
           step && step.changes && typeof step.changes === "object"
             ? step.changes

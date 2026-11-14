@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>Git &amp; Conquer: Total Refactor!</title>
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Git &amp; Conquer: Total Refactor!" />
@@ -23,62 +26,6 @@
     <link rel="icon" type="image/png" href="favicon-16x16.png" sizes="16x16" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <link rel="stylesheet" href="styles/main.css" />
-    <style>
-      #gc-header-branding {
-        position: absolute;
-        left: 28px;
-        top: 18px;
-        z-index: 22;
-        display: inline-flex;
-        align-items: center;
-        text-decoration: none;
-      }
-
-      #gc-header-logo {
-        display: block;
-        width: auto;
-        height: 34px;
-      }
-
-      /* Map watermark logo */
-      #gc-map-branding {
-        position: absolute;
-        left: 440px;
-        bottom: 120px;
-        z-index: 8;
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        padding: 0 !important;
-        pointer-events: none;
-      }
-
-      #gc-map-logo {
-        display: block;
-        width: auto;
-        height: 48px;
-        opacity: 0.9;
-      }
-
-      #settings-btn {
-        position: absolute;
-        top: 80px;
-        right: 32px;
-        width: 40px;
-        height: 40px;
-        border-radius: 10px;
-        border: 1px solid rgba(129, 194, 255, 0.5);
-        background: rgba(16, 24, 38, 0.88);
-        color: #e8f1ff;
-        font-size: 18px;
-        cursor: pointer;
-        z-index: 20;
-      }
-
-      #settings-btn:hover {
-        background: rgba(35, 52, 76, 0.92);
-      }
-    </style>
     <script src="mapper.js"></script>
   </head>
   <body>
@@ -108,6 +55,34 @@
       </div>
 
       <div id="zoom-hud">1 BLOCK = 100 LOC</div>
+
+      <aside id="leaderboard-panel" aria-label="Leaderboard">
+        <button
+          id="leaderboard-drawer-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="leaderboard-body"
+        >
+          <span class="drawer-pill"></span>
+          <span class="drawer-summary-row">
+            <span id="drawer-summary-title">TOTAL EMPIRE</span>
+            <span id="drawer-summary-meta">0 LOC · Tap for ranks ▲</span>
+          </span>
+        </button>
+        <div id="leaderboard-body">
+          <div id="leaderboard-header">
+            <div id="lb-mode-title" class="lb-mode-title hidden"></div>
+            <div id="lb-subtitle" class="lb-subtitle">TOTAL EMPIRE · 0 LOC</div>
+            <div id="lb-growth" class="lb-growth hidden"></div>
+            <div id="lb-islands" class="lb-islands">
+              <span id="lb-island-0" class="lb-island-fe">Fortress 0%</span>
+              <span id="lb-island-1" class="lb-island-be">Frontline 0%</span>
+            </div>
+          </div>
+          <div id="leaderboard-list" role="list"></div>
+        </div>
+      </aside>
+
       <canvas id="battleCanvas"></canvas>
 
       <div id="gc-map-branding" aria-hidden="true">

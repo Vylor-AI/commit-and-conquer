@@ -1,6 +1,11 @@
 const IMPORTED_HISTORY_STORAGE_KEY = "commit_and_conquer.imported_history.v1";
 const IMPORTED_HISTORY_CACHE_SOFT_LIMIT = 4_500_000;
 
+const MAX_FLOATING_TEXTS = 40;
+const MAX_PROJECTILES = 25;
+const MAX_BLASTS = 15;
+const MAX_STEPS_PER_TICK = 8;
+
 const ImportedHistoryStore = {
   readRaw() {
     try {
@@ -43,6 +48,7 @@ function getContributionModelForMode(mode) {
       labelByKey: monthlyContributionModel.monthLabelByKey || {},
       finalRepoScoresByKey:
         monthlyContributionModel.monthFinalRepoScoresByKey || {},
+      orderedKeys: monthlyContributionModel.orderedKeys || null,
     };
   }
 
@@ -56,6 +62,7 @@ function getContributionModelForMode(mode) {
       labelByKey: quarterlyContributionModel.quarterLabelByKey || {},
       finalRepoScoresByKey:
         quarterlyContributionModel.quarterFinalRepoScoresByKey || {},
+      orderedKeys: quarterlyContributionModel.orderedKeys || null,
     };
   }
 
@@ -101,6 +108,7 @@ function normalizeImportedHistory(rawHistory) {
 
   const errors = [];
   const normalized = [];
+  const defaultRepo = window.CNC_DEFAULT_REPO || "default";
 
   rawHistory.forEach((step, idx) => {
     if (!step || typeof step !== "object") {
@@ -129,7 +137,8 @@ function normalizeImportedHistory(rawHistory) {
     normalized.push({
       date,
       committer: typeof step.committer === "string" ? step.committer : "",
-      repo: typeof step.repo === "string" && step.repo ? step.repo : "vylor",
+      repo:
+        typeof step.repo === "string" && step.repo ? step.repo : defaultRepo,
       changes:
         step.changes && typeof step.changes === "object" ? step.changes : {},
       repoScores: repoScores,
@@ -186,7 +195,7 @@ function applyHistoryTimeline(history) {
 
   resetTransientSimulationState();
   recomputeWorldView();
-  updateControlsUI();
+  updateControlsUI(true);
 }
 
 function getRepoScoresAtFrame(frameIdx) {
@@ -227,10 +236,7 @@ function buildRoundBanner(periodKey, mode = scoreMode) {
 
   const winners = ranked.map(([name, loc]) => ({ name, loc }));
   return {
-    title:
-      mode === "quarterly"
-        ? `🏁 ROUND COMPLETE · ${getPeriodLabelForKey(periodKey, mode)}`
-        : `🏁 ROUND COMPLETE · ${getPeriodLabelForKey(periodKey, mode)}`,
+    title: `🏁 ROUND COMPLETE · ${getPeriodLabelForKey(periodKey, mode)}`,
     subtitle:
       mode === "quarterly"
         ? "Quarter champions locked. New quarter begins..."
@@ -248,8 +254,15 @@ function recomputeWorldView() {
 }
 
 function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  viewWidth = window.innerWidth;
+  viewHeight = window.innerHeight;
+  canvasDpr = Math.min(window.devicePixelRatio || 1, 2);
+  SB_WIDTH = getSidebarWidth(viewWidth);
+  document.documentElement.style.setProperty("--sb-width", `${SB_WIDTH}px`);
+
+  canvas.width = Math.round(viewWidth * canvasDpr);
+  canvas.height = Math.round(viewHeight * canvasDpr);
+  ctx.setTransform(canvasDpr, 0, 0, canvasDpr, 0, 0);
 }
 
 function loadBundledHistoryIfEnabled() {
@@ -277,20 +290,86 @@ function initTimeline() {
     gameEvents = [];
     afkByPlayer = {};
     slider.max = 0;
-    updateControlsUI();
+    updateControlsUI(true);
     return;
   }
 
   applyHistoryTimeline(sourceHistory);
 }
 
-function spawnFloatingText(text, r, c, color, stack = 0) {
+function spawnFloatingText(text, r, c, color, stack = 0, meta = null) {
+  if (meta && meta.player && meta.kind) {
+    for (let i = floatingTexts.length - 1; i >= 0; i--) {
+      const existing = floatingTexts[i];
+      if (
+        existing.player === meta.player &&
+        existing.kind === meta.kind &&
+        existing.life > 0.35
+      ) {
+        if (typeof meta.delta === "number") {
+          existing.delta = (existing.delta || 0) + meta.delta;
+          const rounded = Math.round(existing.delta);
+          existing.text =
+            meta.kind === "gain"
+              ? `+${rounded}`
+              : meta.kind === "loss"
+                ? `-${rounded}`
+                : `${rounded}`;
+        } else {
+          existing.text = text;
+        }
+        existing.r = r;
+        existing.c = c;
+        existing.color = color;
+        existing.life = Math.min(1.0, Math.max(existing.life, 0.85));
+        return;
+      }
+    }
+  }
+
+  if (floatingTexts.length >= MAX_FLOATING_TEXTS) {
+    floatingTexts.shift();
+  }
+
   floatingTexts.push({
     text,
     r,
     c,
     yOffset: -stack * 20,
     life: 1.0,
+    color,
+    player: meta ? meta.player : null,
+    kind: meta ? meta.kind : null,
+    delta: meta && typeof meta.delta === "number" ? meta.delta : 0,
+  });
+}
+
+function spawnOrCoalesceProjectile(committer, victim, sr, sc, tr, tc, loss, tier, color) {
+  for (let i = liveProjectiles.length - 1; i >= 0; i--) {
+    const p = liveProjectiles[i];
+    if (p.attacker === committer && p.victim === victim && p.pct < 0.35) {
+      p.loss = (p.loss || 0) + loss;
+      p.tier = damageTier(p.loss) || p.tier || tier;
+      p.tr = tr;
+      p.tc = tc;
+      return;
+    }
+  }
+
+  if (liveProjectiles.length >= MAX_PROJECTILES) {
+    liveProjectiles.shift();
+  }
+
+  liveProjectiles.push({
+    attacker: committer,
+    victim,
+    loss,
+    sr,
+    sc,
+    tr,
+    tc,
+    pct: 0,
+    tier,
     color,
   });
 }
@@ -302,7 +381,8 @@ function processStepEvents(frameIdx) {
   if (!currentStep) return;
 
   let committer = currentStep.committer;
-  let targetRepo = currentStep.repo || "vylor";
+  let defaultRepo = window.CNC_DEFAULT_REPO || "default";
+  let targetRepo = currentStep.repo || defaultRepo;
   let prevRepo = getRepoScoresAtFrame(frameIdx - 1)[targetRepo] || {};
   let currRepo = getRepoScoresAtFrame(frameIdx)[targetRepo] || {};
 
@@ -323,73 +403,137 @@ function processStepEvents(frameIdx) {
 
     if (entry.d > 0) {
       spawnFloatingText(
-        `+${entry.d}`,
+        `+${Math.round(entry.d)}`,
         anchor.r,
         anchor.c,
-        PLAYER_PROFILES[entry.name]?.color || "#37d67a"
+        PLAYER_PROFILES[entry.name]?.color || "#37d67a",
+        0,
+        { player: entry.name, kind: "gain", delta: entry.d }
       );
     } else if (entry.name !== committer) {
       let loss = -entry.d;
       let tier = damageTier(loss);
       spawnFloatingText(
-        `-${loss}`,
+        `-${Math.round(loss)}`,
         anchor.r,
         anchor.c,
-        tier ? tier.color : "#ff5c6c"
+        tier ? tier.color : "#ff5c6c",
+        0,
+        { player: entry.name, kind: "loss", delta: loss }
       );
       if (tier) {
-        spawnFloatingText(tier.label, anchor.r - 0.7, anchor.c, tier.color);
+        spawnFloatingText(
+          tier.label,
+          anchor.r - 0.7,
+          anchor.c,
+          tier.color,
+          0,
+          { player: entry.name, kind: "tier" }
+        );
       }
       if (committerAnchor) {
-        liveProjectiles.push({
-          sr: committerAnchor.r,
-          sc: committerAnchor.c,
-          tr: anchor.r,
-          tc: anchor.c,
-          pct: 0,
+        spawnOrCoalesceProjectile(
+          committer,
+          entry.name,
+          committerAnchor.r,
+          committerAnchor.c,
+          anchor.r,
+          anchor.c,
+          loss,
           tier,
-          color: PLAYER_PROFILES[committer]?.color || "#fff",
-        });
+          PLAYER_PROFILES[committer]?.color || "#fff"
+        );
       }
     } else {
-      spawnFloatingText(`${entry.d}`, anchor.r, anchor.c, "#ffb648");
+      spawnFloatingText(
+        `${Math.round(entry.d)}`,
+        anchor.r,
+        anchor.c,
+        "#ffb648",
+        0,
+        { player: entry.name, kind: "self", delta: entry.d }
+      );
     }
   });
 }
 
-function updateControlsUI() {
-  slider.max = Math.max(0, historyTimeline.length - 1);
+let lastControlsState = {
+  max: -1,
+  val: -1,
+  date: "",
+  btnText: "",
+  disabled: null,
+};
+
+function updateControlsUI(force = false) {
+  const maxVal = Math.max(0, historyTimeline.length - 1);
+  if (force || lastControlsState.max !== maxVal) {
+    slider.max = maxVal;
+    lastControlsState.max = maxVal;
+  }
 
   if (historyTimeline.length === 0) {
-    slider.value = 0;
-    if (counter) counter.textContent = "No battle data loaded";
+    if (force || lastControlsState.val !== 0) {
+      slider.value = 0;
+      lastControlsState.val = 0;
+    }
+    if (counter && (force || lastControlsState.date !== "No battle data loaded")) {
+      counter.textContent = "No battle data loaded";
+      lastControlsState.date = "No battle data loaded";
+    }
     if (playBtn) {
-      playBtn.disabled = true;
-      playBtn.textContent = "Play";
+      if (force || lastControlsState.disabled !== true) {
+        playBtn.disabled = true;
+        lastControlsState.disabled = true;
+      }
+      if (force || lastControlsState.btnText !== "Play") {
+        playBtn.textContent = "Play";
+        lastControlsState.btnText = "Play";
+      }
     }
     return;
   }
 
-  if (playBtn) playBtn.disabled = false;
+  if (playBtn && (force || lastControlsState.disabled !== false)) {
+    playBtn.disabled = false;
+    lastControlsState.disabled = false;
+  }
 
-  slider.value = currentFrameIndex;
+  if (force || lastControlsState.val !== currentFrameIndex) {
+    slider.value = currentFrameIndex;
+    lastControlsState.val = currentFrameIndex;
+  }
+
   let step = historyTimeline[currentFrameIndex];
-  if (step && counter) counter.textContent = step.date;
+  const nextDate = step ? step.date : "";
+  if (counter && (force || lastControlsState.date !== nextDate)) {
+    counter.textContent = nextDate;
+    lastControlsState.date = nextDate;
+  }
+
   if (playBtn) {
-    playBtn.textContent =
+    const nextBtnText =
       currentFrameIndex >= historyTimeline.length - 1
         ? "Replay"
         : isPlaying
           ? "Pause"
           : "Play";
+    if (force || lastControlsState.btnText !== nextBtnText) {
+      playBtn.textContent = nextBtnText;
+      lastControlsState.btnText = nextBtnText;
+    }
   }
 }
 
 function updateSimulation() {
   let now = performance.now();
-  let delta = now - lastFrameTime;
+  let rawDelta = now - lastFrameTime;
   lastFrameTime = now;
   if (historyTimeline.length === 0) return;
+
+  // Clamp delta to prevent huge catch-up bursts after tab switches or lag spikes
+  let delta = Math.min(Math.max(0, rawDelta), 100);
+  let dtScale = Math.min(2.5, Math.max(0.2, delta / 16.667));
 
   if (roundPauseUntil > 0) {
     if (now < roundPauseUntil) {
@@ -403,13 +547,16 @@ function updateSimulation() {
   let speedMultiplier = parseFloat(speedSelect.value);
   if (isPlaying && currentFrameIndex < historyTimeline.length - 1) {
     frameAccumulator += (delta / 120) * speedMultiplier;
+    let stepsProcessed = 0;
     while (
       frameAccumulator >= 1 &&
-      currentFrameIndex < historyTimeline.length - 1
+      currentFrameIndex < historyTimeline.length - 1 &&
+      stepsProcessed < MAX_STEPS_PER_TICK
     ) {
       let prevIndex = currentFrameIndex;
       currentFrameIndex++;
       frameAccumulator -= 1;
+      stepsProcessed++;
       processStepEvents(currentFrameIndex);
 
       if (scoreMode !== "total") {
@@ -418,18 +565,25 @@ function updateSimulation() {
         if (prevKey && nextKey && prevKey !== nextKey) {
           roundBanner = buildRoundBanner(prevKey, scoreMode);
           roundPauseUntil = now + ROUND_PAUSE_MS;
+          frameAccumulator = 0;
           break;
         }
       }
+    }
+    if (frameAccumulator > 2) {
+      frameAccumulator = 1;
     }
     updateControlsUI();
   }
 
   for (let i = liveProjectiles.length - 1; i >= 0; i--) {
     let p = liveProjectiles[i];
-    p.pct += 0.06;
+    p.pct += 0.06 * dtScale;
     if (p.pct >= 1) {
       let t = p.tier;
+      if (impactBlasts.length >= MAX_BLASTS) {
+        impactBlasts.shift();
+      }
       impactBlasts.push({
         r: p.tr,
         c: p.tc,
@@ -446,18 +600,18 @@ function updateSimulation() {
 
   for (let i = impactBlasts.length - 1; i >= 0; i--) {
     let b = impactBlasts[i];
-    b.rad += (b.maxRad || 26) * 0.06;
-    b.alpha -= 0.05;
+    b.rad += (b.maxRad || 26) * 0.06 * dtScale;
+    b.alpha -= 0.05 * dtScale;
     if (b.alpha <= 0) impactBlasts.splice(i, 1);
   }
 
-  screenShake *= 0.85;
+  screenShake *= Math.pow(0.85, dtScale);
   if (screenShake < 0.3) screenShake = 0;
 
   for (let i = floatingTexts.length - 1; i >= 0; i--) {
     let t = floatingTexts[i];
-    t.yOffset -= 0.35;
-    t.life -= 0.006;
+    t.yOffset -= 0.35 * dtScale;
+    t.life -= 0.008 * dtScale;
     if (t.life <= 0) floatingTexts.splice(i, 1);
   }
 }

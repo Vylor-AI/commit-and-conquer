@@ -9,8 +9,18 @@ const modeTotalBtn = document.getElementById("mode-total-btn");
 const modeMonthlyBtn = document.getElementById("mode-monthly-btn");
 const modeQuarterlyBtn = document.getElementById("mode-quarterly-btn");
 
-// --- LAYOUT CONFIG ---
-const SB_WIDTH = 400;
+// --- VIEWPORT & RESPONSIVE LAYOUT CONFIG ---
+let viewWidth = window.innerWidth;
+let viewHeight = window.innerHeight;
+let canvasDpr = Math.min(window.devicePixelRatio || 1, 2);
+
+function getSidebarWidth(w = viewWidth) {
+  if (w <= 640) return 0;
+  if (w <= 1024) return 270;
+  return Math.round(Math.min(400, Math.max(300, w * 0.28)));
+}
+
+let SB_WIDTH = getSidebarWidth(viewWidth);
 const CELL = 18;
 const BLOCK = 15;
 const VIEW_PAD = 0.86;
@@ -34,18 +44,20 @@ const RANKS = [
   { name: "Matrix Warlord", icon: "✦" },
 ];
 
-const REPO_ISLANDS = [
-  {
-    match: (n) => !n.includes("web"),
-    label: "THE FORTRESS · backend",
-    short: "Fortress",
-  },
-  {
-    match: (n) => n.includes("web"),
-    label: "THE FRONTLINE · frontend",
-    short: "Frontline",
-  },
-];
+const REPO_ISLANDS = Array.isArray(window.CNC_REPO_ISLANDS)
+  ? window.CNC_REPO_ISLANDS
+  : [
+      {
+        match: (n) => !String(n || "").includes("web"),
+        label: "THE FORTRESS · backend",
+        short: "Fortress",
+      },
+      {
+        match: (n) => String(n || "").includes("web"),
+        label: "THE FRONTLINE · frontend",
+        short: "Frontline",
+      },
+    ];
 const ISLAND_GAP = 9;
 
 // --- ZOOM = LINES PER BLOCK ---
@@ -92,26 +104,7 @@ let gameEvents = [];
 let afkByPlayer = {};
 
 const avatarImages = {};
-const VYLOR_AVATAR_BG = "#245340";
-
-function composeBrandedAvatar(sourceImg, bgColor) {
-  const size = 96;
-  const out = document.createElement("canvas");
-  out.width = size;
-  out.height = size;
-  const outCtx = out.getContext("2d");
-  if (!outCtx) return sourceImg;
-
-  const radius = size / 2;
-  outCtx.fillStyle = bgColor;
-  outCtx.beginPath();
-  outCtx.arc(radius, radius, radius, 0, Math.PI * 2);
-  outCtx.fill();
-
-  const pad = 18;
-  outCtx.drawImage(sourceImg, pad, pad, size - pad * 2, size - pad * 2);
-  return out;
-}
+let profileRevision = 0;
 
 function resolveProfileAvatarSource(name, profile) {
   const avatar =
@@ -143,6 +136,7 @@ function loadAvatarImageForProfile(name, profile) {
   const img = new Image();
   img.onload = () => {
     avatarImages[name] = img;
+    profileRevision++;
   };
 
   img.src = source;
@@ -159,11 +153,14 @@ function refreshAvatarImages() {
     if (!profile || typeof profile !== "object") return;
     loadAvatarImageForProfile(name, profile);
   });
+  profileRevision++;
 }
 
 refreshAvatarImages();
 
-const PRIORITY_SEATS = new Set(["Vylor", "Vylor AI"]);
+const PRIORITY_SEATS = new Set(
+  Array.isArray(window.CNC_PRIORITY_PLAYERS) ? window.CNC_PRIORITY_PLAYERS : []
+);
 
 let ISLAND_SEATS = [];
 

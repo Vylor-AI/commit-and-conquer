@@ -86,7 +86,10 @@
       normalized.push({
         date,
         committer: typeof step.committer === "string" ? step.committer : "",
-        repo: typeof step.repo === "string" && step.repo ? step.repo : "vylor",
+        repo:
+          typeof step.repo === "string" && step.repo
+            ? step.repo
+            : window.CNC_DEFAULT_REPO || "default",
         changes:
           step.changes && typeof step.changes === "object" ? step.changes : {},
         repoScores: normalizeRepoScores(step.repoScores),

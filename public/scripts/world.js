@@ -1,3 +1,14 @@
+let worldCache = new WeakMap();
+let worldStats = {
+  builds: 0,
+  hits: 0,
+  lastBuildMs: 0,
+};
+
+function invalidateWorldCache() {
+  worldCache = new WeakMap();
+}
+
 function precomputeLayout(finalRepoScores) {
   const fallbackStep = historyTimeline[historyTimeline.length - 1] || {};
   const sourceScores = finalRepoScores || fallbackStep.repoScores || {};
@@ -17,11 +28,25 @@ function precomputeLayout(finalRepoScores) {
     order.forEach((n, i) => (seat[n] = i));
     return { order, seat };
   });
+
+  invalidateWorldCache();
 }
 
-// --- WORLD BUILD ---
+// --- WORLD BUILD (MEMOIZED + O(N) BFS) ---
 function buildWorld(repoScores) {
+  const lpb = Math.round(linesPerBlock * 100) / 100;
+  if (repoScores && typeof repoScores === "object") {
+    const cached = worldCache.get(repoScores);
+    if (cached && cached.lpb === lpb && cached.seatsRef === ISLAND_SEATS) {
+      worldStats.hits++;
+      return cached.world;
+    }
+  }
+
+  const t0 = performance.now();
   const owner = new Map();
+  const blocksByPlayer = new Map();
+  const ownerCoordList = [];
   const key = (r, c) => r + "," + c;
   const centroids = [];
 
@@ -83,13 +108,22 @@ function buildWorld(repoScores) {
       let islandSums = {};
       allocs.forEach((a) => {
         let queue = [[a.seed.r, a.seed.c]];
-        let visited = new Set();
+        let qHead = 0;
+        let visited = new Set([key(a.seed.r, a.seed.c)]);
         let placed = 0;
-        while (queue.length > 0 && placed < a.count) {
-          let [r, c] = queue.shift();
+        let playerBlocks = blocksByPlayer.get(a.name);
+        if (!playerBlocks) {
+          playerBlocks = [];
+          blocksByPlayer.set(a.name, playerBlocks);
+        }
+
+        while (qHead < queue.length && placed < a.count) {
+          let [r, c] = queue[qHead++];
           let k = key(r, c);
           if (!owner.has(k)) {
             owner.set(k, a.name);
+            playerBlocks.push([r, c]);
+            ownerCoordList.push([r, c]);
             placed++;
             if (c > islandMaxC) islandMaxC = c;
             if (!islandSums[a.name]) islandSums[a.name] = { r: 0, c: 0, n: 0 };
@@ -97,17 +131,33 @@ function buildWorld(repoScores) {
             islandSums[a.name].c += c;
             islandSums[a.name].n++;
           }
-          for (let [nr, nc] of [
-            [r - 1, c],
-            [r + 1, c],
-            [r, c - 1],
-            [r, c + 1],
-          ]) {
-            let nk = key(nr, nc);
-            if (!visited.has(nk)) {
-              visited.add(nk);
-              queue.push([nr, nc]);
-            }
+          const n0r = r - 1,
+            n0c = c;
+          const k0 = key(n0r, n0c);
+          if (!visited.has(k0)) {
+            visited.add(k0);
+            queue.push([n0r, n0c]);
+          }
+          const n1r = r + 1,
+            n1c = c;
+          const k1 = key(n1r, n1c);
+          if (!visited.has(k1)) {
+            visited.add(k1);
+            queue.push([n1r, n1c]);
+          }
+          const n2r = r,
+            n2c = c - 1;
+          const k2 = key(n2r, n2c);
+          if (!visited.has(k2)) {
+            visited.add(k2);
+            queue.push([n2r, n2c]);
+          }
+          const n3r = r,
+            n3c = c + 1;
+          const k3 = key(n3r, n3c);
+          if (!visited.has(k3)) {
+            visited.add(k3);
+            queue.push([n3r, n3c]);
           }
         }
       });
@@ -121,30 +171,37 @@ function buildWorld(repoScores) {
   }
 
   const beach = new Set();
-  for (const k of owner.keys()) {
-    let [r, c] = k.split(",").map(Number);
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        if (dr === 0 && dc === 0) continue;
-        let nk = key(r + dr, c + dc);
-        if (!owner.has(nk)) beach.add(nk);
-      }
-    }
-  }
-
+  const beachCells = [];
   let minR = Infinity,
     maxR = -Infinity,
     minC = Infinity,
     maxC = -Infinity;
-  const scan = (k) => {
-    let [r, c] = k.split(",").map(Number);
+
+  for (let i = 0; i < ownerCoordList.length; i++) {
+    const [r, c] = ownerCoordList[i];
     if (r < minR) minR = r;
     if (r > maxR) maxR = r;
     if (c < minC) minC = c;
     if (c > maxC) maxC = c;
-  };
-  owner.forEach((_, k) => scan(k));
-  beach.forEach((k) => scan(k));
+
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const nr = r + dr;
+        const nc = c + dc;
+        const nk = key(nr, nc);
+        if (!owner.has(nk) && !beach.has(nk)) {
+          beach.add(nk);
+          beachCells.push([nr, nc]);
+          if (nr < minR) minR = nr;
+          if (nr > maxR) maxR = nr;
+          if (nc < minC) minC = nc;
+          if (nc > maxC) maxC = nc;
+        }
+      }
+    }
+  }
+
   if (!isFinite(minR)) {
     minR = -5;
     maxR = 5;
@@ -152,7 +209,30 @@ function buildWorld(repoScores) {
     maxC = 5;
   }
 
-  return { owner, beach, minR, maxR, minC, maxC, centroids };
+  const world = {
+    owner,
+    blocksByPlayer,
+    beach,
+    beachCells,
+    minR,
+    maxR,
+    minC,
+    maxC,
+    centroids,
+  };
+
+  worldStats.builds++;
+  worldStats.lastBuildMs = performance.now() - t0;
+
+  if (repoScores && typeof repoScores === "object") {
+    worldCache.set(repoScores, {
+      lpb,
+      seatsRef: ISLAND_SEATS,
+      world,
+    });
+  }
+
+  return world;
 }
 
 function isAfk(name) {
@@ -164,7 +244,8 @@ function isAfk(name) {
 }
 
 function centroidFor(centroids, name, repoName) {
-  const island = REPO_ISLANDS.find((i) => i.match(repoName || "vylor"));
+  const defaultRepo = window.CNC_DEFAULT_REPO || "default";
+  const island = REPO_ISLANDS.find((i) => i.match(repoName || defaultRepo));
   const idx = REPO_ISLANDS.indexOf(island);
   let matches = centroids.filter((c) => c.name === name);
   if (matches.length === 0) return null;
@@ -175,8 +256,8 @@ function centroidFor(centroids, name, repoName) {
 
 function precomputeCamera(finalRepoScores) {
   const world = buildWorld(finalRepoScores);
-  const viewW = canvas.width - SB_WIDTH;
-  const viewH = canvas.height;
+  const viewW = Math.max(120, viewWidth - SB_WIDTH);
+  const viewH = Math.max(120, viewHeight);
   const cols = world.maxC - world.minC + 1;
   const rows = world.maxR - world.minR + 1;
 
@@ -197,8 +278,8 @@ function centerOnFrame(idx) {
   const w = buildWorld(getRepoScoresAtFrame(idx));
   const cc = (w.minC + w.maxC) / 2;
   const cr = (w.minR + w.maxR) / 2;
-  const viewW = canvas.width - SB_WIDTH;
-  const viewH = canvas.height;
+  const viewW = Math.max(120, viewWidth - SB_WIDTH);
+  const viewH = Math.max(120, viewHeight);
   pan.x = SB_WIDTH + viewW / 2 - cc * cellPx - baseOffsetX;
   pan.y = viewH / 2 - cr * cellPx - baseOffsetY;
 }

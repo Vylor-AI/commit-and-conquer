@@ -320,7 +320,7 @@ function framePositiveContributions(step, prevStep) {
 
   const changes = step.changes || {};
   const committer = step.committer;
-  const repo = step.repo || "vylor";
+  const repo = step.repo || window.CNC_DEFAULT_REPO || "default";
   const added =
     typeof changes.added === "number" ? Math.max(0, changes.added) : 0;
   if (committer && added > 0) {
@@ -491,6 +491,7 @@ function buildPeriodContributionModel(historyTimeline, periodType) {
     periodFinalRepoScoresByKey,
     periodGrowthByKey,
     periodLabelByKey,
+    orderedKeys,
   };
 }
 
@@ -503,6 +504,7 @@ function buildMonthlyContributionModel(historyTimeline) {
     monthFinalRepoScoresByKey: m.periodFinalRepoScoresByKey,
     monthGrowthByKey: m.periodGrowthByKey,
     monthLabelByKey: m.periodLabelByKey,
+    orderedKeys: m.orderedKeys,
   };
 }
 
@@ -515,6 +517,7 @@ function buildQuarterlyContributionModel(historyTimeline) {
     quarterFinalRepoScoresByKey: q.periodFinalRepoScoresByKey,
     quarterGrowthByKey: q.periodGrowthByKey,
     quarterLabelByKey: q.periodLabelByKey,
+    orderedKeys: q.orderedKeys,
   };
 }
 

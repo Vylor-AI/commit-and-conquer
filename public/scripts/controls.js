@@ -25,9 +25,10 @@ function setScoreMode(mode) {
   frameAccumulator = 0;
   roundPauseUntil = 0;
   roundBanner = null;
+  followCam = true;
 
   recomputeWorldView();
-  updateControlsUI();
+  updateControlsUI(true);
 }
 
 window.addEventListener("resize", () => {
@@ -38,6 +39,7 @@ window.addEventListener("resize", () => {
   }
 });
 
+// --- MOUSE PAN & ZOOM ---
 canvas.addEventListener("mousedown", (e) => {
   if (e.clientX < SB_WIDTH) return;
   isDragging = true;
@@ -55,6 +57,14 @@ window.addEventListener("mouseup", () => {
   isDragging = false;
 });
 
+canvas.addEventListener("dblclick", (e) => {
+  if (e.clientX < SB_WIDTH) return;
+  followCam = true;
+  if (historyTimeline.length > 0) {
+    centerOnFrame(currentFrameIndex);
+  }
+});
+
 canvas.addEventListener(
   "wheel",
   (e) => {
@@ -67,6 +77,114 @@ canvas.addEventListener(
   { passive: false }
 );
 
+// --- TOUCH PAN, PINCH-ZOOM & DOUBLE-TAP ---
+let touchMode = "none"; // "pan" | "pinch"
+let pinchStartDist = 0;
+let pinchStartLPB = 100;
+let pinchLastMid = { x: 0, y: 0 };
+let lastTapTime = 0;
+
+function getTouchDistance(t1, t2) {
+  const dx = t1.clientX - t2.clientX;
+  const dy = t1.clientY - t2.clientY;
+  return Math.hypot(dx, dy);
+}
+
+function getTouchMidpoint(t1, t2) {
+  return {
+    x: (t1.clientX + t2.clientX) / 2,
+    y: (t1.clientY + t2.clientY) / 2,
+  };
+}
+
+canvas.addEventListener(
+  "touchstart",
+  (e) => {
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      if (t.clientX < SB_WIDTH) return;
+      e.preventDefault();
+
+      const now = performance.now();
+      if (now - lastTapTime < 280) {
+        followCam = true;
+        if (historyTimeline.length > 0) {
+          centerOnFrame(currentFrameIndex);
+        }
+        lastTapTime = 0;
+        return;
+      }
+      lastTapTime = now;
+
+      touchMode = "pan";
+      followCam = false;
+      dragStart = { x: t.clientX - pan.x, y: t.clientY - pan.y };
+    } else if (e.touches.length === 2) {
+      e.preventDefault();
+      touchMode = "pinch";
+      followCam = false;
+      pinchStartDist = Math.max(10, getTouchDistance(e.touches[0], e.touches[1]));
+      pinchStartLPB = linesPerBlock;
+      pinchLastMid = getTouchMidpoint(e.touches[0], e.touches[1]);
+    }
+  },
+  { passive: false }
+);
+
+canvas.addEventListener(
+  "touchmove",
+  (e) => {
+    if (touchMode === "pan" && e.touches.length === 1) {
+      e.preventDefault();
+      const t = e.touches[0];
+      pan.x = t.clientX - dragStart.x;
+      pan.y = t.clientY - dragStart.y;
+    } else if (touchMode === "pinch" && e.touches.length === 2) {
+      e.preventDefault();
+      const dist = Math.max(10, getTouchDistance(e.touches[0], e.touches[1]));
+      const ratio = pinchStartDist / dist; // pinch out (dist > start) -> smaller linesPerBlock (more blocks)
+      linesPerBlock = Math.max(
+        LPB_MIN,
+        Math.min(LPB_MAX, pinchStartLPB * ratio)
+      );
+      zoomHud.textContent = `1 BLOCK = ${Math.round(linesPerBlock)} LOC`;
+
+      const mid = getTouchMidpoint(e.touches[0], e.touches[1]);
+      pan.x += mid.x - pinchLastMid.x;
+      pan.y += mid.y - pinchLastMid.y;
+      pinchLastMid = mid;
+    }
+  },
+  { passive: false }
+);
+
+canvas.addEventListener("touchend", (e) => {
+  if (e.touches.length === 0) {
+    touchMode = "none";
+  } else if (e.touches.length === 1) {
+    const t = e.touches[0];
+    touchMode = "pan";
+    dragStart = { x: t.clientX - pan.x, y: t.clientY - pan.y };
+  }
+});
+
+canvas.addEventListener("touchcancel", () => {
+  touchMode = "none";
+});
+
+// --- MOBILE LEADERBOARD DRAWER TOGGLE ---
+const drawerToggleBtn = document.getElementById("leaderboard-drawer-toggle");
+const leaderboardPanelEl = document.getElementById("leaderboard-panel");
+
+if (drawerToggleBtn && leaderboardPanelEl) {
+  drawerToggleBtn.addEventListener("click", () => {
+    const isOpen = leaderboardPanelEl.classList.toggle("drawer-open");
+    drawerToggleBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    lastLeaderboardRenderKey = "";
+  });
+}
+
+// --- PLAYBACK & TIMELINE CONTROLS ---
 playBtn.addEventListener("click", () => {
   if (currentFrameIndex >= historyTimeline.length - 1) {
     currentFrameIndex = 0;
@@ -78,10 +196,9 @@ playBtn.addEventListener("click", () => {
   } else {
     isPlaying = !isPlaying;
   }
-  updateControlsUI();
+  updateControlsUI(true);
 
   if (window.CNCAnalytics && typeof window.CNCAnalytics.track === "function") {
-    const speedSelect = document.getElementById("speed-select");
     const speed = speedSelect ? parseFloat(speedSelect.value) : 1;
     if (isPlaying) {
       window.CNCAnalytics.track("playback_play", {
@@ -103,7 +220,7 @@ slider.addEventListener("input", (e) => {
   frameAccumulator = 0;
   roundPauseUntil = 0;
   roundBanner = null;
-  updateControlsUI();
+  updateControlsUI(true);
 });
 
 modeTotalBtn.addEventListener("click", () => setScoreMode("total"));

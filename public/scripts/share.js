@@ -11,25 +11,33 @@
       typeof window.CNC_API_BASE_URL === "string" &&
       window.CNC_API_BASE_URL.trim()
     ) {
-      return window.CNC_API_BASE_URL.trim();
+      return window.CNC_API_BASE_URL.trim().replace(/\/+$/, "");
     }
 
-    const host = window.location.hostname.toLowerCase();
-
-    if (host === "localhost" || host === "127.0.0.1") {
-      return "http://localhost:3001";
-    }
+    const host = (window.location.hostname || "").toLowerCase();
 
     if (host === "staging.gitconquer.com") {
       return "https://api-staging.vylor.ai";
     }
 
-    return "https://api.vylor.ai";
+    if (
+      host === "gitconquer.com" ||
+      host === "www.gitconquer.com" ||
+      host.endsWith(".gitconquer.com")
+    ) {
+      return "https://api.vylor.ai";
+    }
+
+    return "";
+  }
+
+  function isShareEnabled() {
+    return Boolean(apiBaseUrl());
   }
 
   function buildApiUrl(path) {
     const base = apiBaseUrl();
-    if (!base) return path;
+    if (!base) return "";
     return `${base}${path}`;
   }
 
@@ -74,7 +82,7 @@
 
   async function loadSharedHistoryFromLocation() {
     const shareId = currentShareId();
-    if (!shareId) {
+    if (!shareId || !isShareEnabled()) {
       return { hasShareId: false, history: [] };
     }
 
@@ -185,9 +193,10 @@
     }
 
     if (!response.ok) {
-      error =
-        data.error || `Error while geenrating the link: ${response.statusText}`;
-      setStatus(error, "error");
+      const errorMsg =
+        (data && data.error) ||
+        `Error while generating the link: ${response.statusText}`;
+      setStatus(errorMsg, "error");
       return null;
     }
 
@@ -203,10 +212,12 @@
       return null;
     }
 
-    valid_for_days = data.valid_for_days;
+    const validForDays = data.valid_for_days;
 
     setStatus(
-      `Share link generated successfully. Valid for ${valid_for_days} days.`,
+      validForDays
+        ? `Share link generated successfully. Valid for ${validForDays} days.`
+        : "Share link generated successfully.",
       "info"
     );
     return link;
@@ -426,6 +437,7 @@
   }
 
   function initializeShareButton() {
+    if (!isShareEnabled()) return;
     floatingShareButton = ensureShareButton();
     positionShareButtonLeftOfSettings();
     window.addEventListener("resize", positionShareButtonLeftOfSettings);
