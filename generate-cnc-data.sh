@@ -4,14 +4,14 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  run_shell_pipeline.sh -p <workers> -o <output_json> <repo_path> [repo_path...]
+  generate-cnc-data.sh -p <workers> -o <output_json> <repo_path> [repo_path...]
 
 Options:
   -p <workers>      Parallel workers for blame tasks (default: 16)
   -o <output_json> Output JSON path (default: ./commit_and_conquer_data.json)
 
 Example:
-  bash scripts/cc_analyze/run_shell_pipeline.sh -p 16 -o ./commit_and_conquer_data.json ../vylor ../vylor-web
+  bash generate-cnc-data.sh -p 16 -o ./commit_and_conquer_data.json ../backend ../frontend
 EOF
 }
 
