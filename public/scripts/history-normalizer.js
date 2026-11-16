@@ -29,7 +29,83 @@
     return normalized;
   }
 
+  function decodeCompactV2(payload) {
+    const errors = [];
+    const authors = Array.isArray(payload.authors) ? payload.authors : [];
+    const names = authors.map((a, idx) =>
+      a && typeof a.n === "string" && a.n ? a.n : `Player ${idx + 1}`
+    );
+    const rawSteps = Array.isArray(payload.steps) ? payload.steps : null;
+
+    if (!rawSteps) {
+      return {
+        history: [],
+        errors: ["Invalid v2 payload: missing 'steps' array."],
+      };
+    }
+
+    const repoName =
+      typeof payload.label === "string" && payload.label
+        ? payload.label
+        : typeof payload.repo === "string" && payload.repo
+          ? payload.repo
+          : window.CNC_DEFAULT_REPO || "default";
+
+    const running = {};
+    const history = [];
+
+    rawSteps.forEach((row, idx) => {
+      if (!Array.isArray(row) || row.length < 5) {
+        errors.push(`Step #${idx + 1}: malformed row.`);
+        return;
+      }
+
+      const [ts, authorIdx, added, removed, changed] = row;
+      const date = new Date(Number(ts) * 1000);
+      if (Number.isNaN(date.getTime())) {
+        errors.push(`Step #${idx + 1}: invalid timestamp.`);
+        return;
+      }
+
+      if (Array.isArray(changed)) {
+        changed.forEach((pair) => {
+          if (!Array.isArray(pair)) return;
+          const name = names[pair[0]];
+          if (!name) return;
+          running[name] = Math.max(0, Number(pair[1]) || 0);
+        });
+      }
+
+      history.push({
+        date: date.toISOString(),
+        committer: names[authorIdx] || "",
+        repo: repoName,
+        changes: {
+          added: Number(added) || 0,
+          removed: Number(removed) || 0,
+        },
+        repoScores: { [repoName]: Object.assign({}, running) },
+      });
+    });
+
+    return {
+      history,
+      errors,
+      meta: {
+        generatedAt: payload.generatedAt || null,
+        repositories: [repoName],
+        source: payload.repo || null,
+        sha: payload.sha || null,
+        stats: payload.stats || null,
+      },
+    };
+  }
+
   function normalizeImportedHistory(rawPayload) {
+    if (rawPayload && !Array.isArray(rawPayload) && rawPayload.v === 2) {
+      return decodeCompactV2(rawPayload);
+    }
+
     if (!rawPayload) {
       return {
         history: [],
@@ -112,5 +188,6 @@
     safeParseJson,
     normalizeRepoScores,
     normalizeImportedHistory,
+    decodeCompactV2,
   };
 })();

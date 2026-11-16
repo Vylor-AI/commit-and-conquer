@@ -19,6 +19,20 @@ Thank you for your interest in contributing to **Git & Conquer**!
 - **Responsive Design:** Verify UI changes across desktop (`1440×900`), tablet (`768×1024`), and mobile (`390×844`) viewports.
 - **No Sensitive Data:** Never commit `public/config.js`, real API keys, or personal/private repository datasets.
 
+## Adding a Repository to the Showcase
+
+1. Add `{ "repo": "owner/name" }` to [`showcase/repos.json`](./showcase/repos.json) (optional fields: `ref`, `since`, `maxAuthors`, `maxSteps`, `description`).
+2. Test locally (note `public/demos/` is git-ignored):
+   ```bash
+   node tools/showcase/analyze-one.js --repo owner/name --out-dir ./demos-tmp
+   node tools/showcase/build-index.js --config showcase/repos.json --artifacts-dir ./demos-tmp --out-dir public/demos
+   ```
+3. Run the unit tests:
+   ```bash
+   node --test tools/cc_analyze/test/compactExporter.test.js tools/showcase/test/showcase.test.js
+   ```
+4. Once merged, trigger **Refresh Showcase Demos** via `workflow_dispatch` (you can pass `repo: owner/name` to refresh only the new repository).
+
 ## Pull Requests
 
 - Create a feature branch from `master` (or `develop`).

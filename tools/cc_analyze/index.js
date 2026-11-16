@@ -46,6 +46,14 @@ function parseArgs(argv) {
   let fileWorkers = Math.min(os.cpus().length, 8);
   let repoWorkers = 2;
   let debug = false;
+  let format = "v1";
+  let authorStyle = "short";
+  let maxAuthors = 100;
+  let maxSteps = 3000;
+  let includeOthers = false;
+  let repoLabel = null;
+  let since = null;
+  let cacheKey = null;
 
   for (let i = 0; i < args.length; i += 1) {
     const token = args[i];
@@ -57,6 +65,53 @@ function parseArgs(argv) {
 
     if (token === "--output" && args[i + 1]) {
       outputFile = args[i + 1];
+      i += 1;
+      continue;
+    }
+
+    if (token === "--format" && args[i + 1]) {
+      format = args[i + 1] === "v2" ? "v2" : "v1";
+      i += 1;
+      continue;
+    }
+
+    if (token === "--author-style" && args[i + 1]) {
+      authorStyle = args[i + 1] === "full" ? "full" : "short";
+      i += 1;
+      continue;
+    }
+
+    if (token === "--max-authors" && args[i + 1]) {
+      maxAuthors = parsePositiveInt(args[i + 1], maxAuthors);
+      i += 1;
+      continue;
+    }
+
+    if (token === "--max-steps" && args[i + 1]) {
+      maxSteps = parsePositiveInt(args[i + 1], maxSteps);
+      i += 1;
+      continue;
+    }
+
+    if (token === "--include-others") {
+      includeOthers = true;
+      continue;
+    }
+
+    if (token === "--repo-label" && args[i + 1]) {
+      repoLabel = args[i + 1];
+      i += 1;
+      continue;
+    }
+
+    if (token === "--since" && args[i + 1]) {
+      since = args[i + 1];
+      i += 1;
+      continue;
+    }
+
+    if (token === "--cache-key" && args[i + 1]) {
+      cacheKey = args[i + 1];
       i += 1;
       continue;
     }
@@ -82,7 +137,22 @@ function parseArgs(argv) {
     repoArgs.push(token);
   }
 
-  return { repoArgs, outputFile, cacheDir, fileWorkers, repoWorkers, debug };
+  return {
+    repoArgs,
+    outputFile,
+    cacheDir,
+    fileWorkers,
+    repoWorkers,
+    debug,
+    format,
+    authorStyle,
+    maxAuthors,
+    maxSteps,
+    includeOthers,
+    repoLabel,
+    since,
+    cacheKey,
+  };
 }
 
 function resolveRepoPaths(repoArgs, git) {
@@ -113,8 +183,22 @@ async function main() {
   const startedAt = Date.now();
 
   try {
-    const { repoArgs, outputFile, cacheDir, fileWorkers, repoWorkers, debug } =
-      parseArgs(process.argv);
+    const {
+      repoArgs,
+      outputFile,
+      cacheDir,
+      fileWorkers,
+      repoWorkers,
+      debug,
+      format,
+      authorStyle,
+      maxAuthors,
+      maxSteps,
+      includeOthers,
+      repoLabel,
+      since,
+      cacheKey,
+    } = parseArgs(process.argv);
 
     const git = new LocalGitAdapter();
     const repoPaths = resolveRepoPaths(repoArgs, git);
@@ -126,6 +210,14 @@ async function main() {
       fileWorkers,
       repoWorkers,
       debug,
+      format,
+      authorStyle,
+      maxAuthors,
+      maxSteps,
+      includeOthers,
+      repoLabel,
+      since,
+      cacheKey,
     });
 
     console.log(`✅ Finished! Output stored in ${analyzeResult.outputFile}`);

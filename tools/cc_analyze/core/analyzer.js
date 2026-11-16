@@ -5,6 +5,11 @@ const { LocalGitAdapter } = require("../git/localGitAdapter");
 const { FsStorageAdapter } = require("../storage/fsStorageAdapter");
 const { buildAuthorNormalizer } = require("../identity/authorIdentity");
 const { isAnalyzableFile } = require("../domain/fileFilters");
+const {
+  buildCompactV2,
+  writeCompactV2File,
+  iterateCheckpointFiles,
+} = require("./compactExporter");
 
 const BLAME_WORKER_PATH = path.join(__dirname, "blameWorker.js");
 
@@ -171,8 +176,19 @@ function normalizeOwnership(ownership, normalizeAuthor) {
   return { ...ownership, counts: normalizedCounts };
 }
 
-async function blameFile({ repoPath, commitHash, filePath, warnings }) {
+async function blameFile({ repoPath, commitHash, filePath, git, warnings }) {
   try {
+    if (
+      git &&
+      git.gitBackend !== "nodegit" &&
+      typeof git.blameFileAtCommitWithCliAsync === "function"
+    ) {
+      return await git.blameFileAtCommitWithCliAsync(
+        repoPath,
+        commitHash,
+        filePath
+      );
+    }
     return await runBlameWorker({ repoPath, commitHash, filePath });
   } catch (error) {
     warnings.push(
@@ -185,6 +201,7 @@ async function blameFile({ repoPath, commitHash, filePath, warnings }) {
 async function resolveOwnershipForCommitFile({
   repoKey,
   repoPath,
+  git,
   storage,
   filePath,
   commitHash,
@@ -214,6 +231,7 @@ async function resolveOwnershipForCommitFile({
         repoPath,
         commitHash,
         filePath,
+        git,
         warnings,
       });
       ownershipMetrics.blameMs += Date.now() - blameStartedAtMs;
@@ -289,6 +307,7 @@ async function warmOwnershipCache({
   repoName,
   repoKey,
   repoPath,
+  git,
   storage,
   tasks,
   fileWorkers,
@@ -319,6 +338,7 @@ async function warmOwnershipCache({
       await resolveOwnershipForCommitFile({
         repoKey,
         repoPath,
+        git,
         storage,
         filePath: task.filePath,
         commitHash: task.commitHash,
@@ -348,21 +368,45 @@ async function warmOwnershipCache({
   );
 }
 
+function findResumableCheckpoint(storage, repoKey) {
+  const dir = storage.checkpointsDir(repoKey);
+  if (!fs.existsSync(dir)) return null;
+
+  const files = fs
+    .readdirSync(dir)
+    .filter((name) => /^\d+\.json$/.test(name))
+    .sort();
+
+  for (let i = files.length - 1; i >= 0; i -= 1) {
+    const cp = storage.readJson(path.join(dir, files[i]), null);
+    if (cp && cp.activeFileStates) {
+      return cp;
+    }
+  }
+  return null;
+}
+
 async function analyzeSingleRepository({
   repoPath,
   git,
   storage,
   fileWorkers,
   debug,
+  authorStyle = "short",
+  since = null,
+  cacheKey = null,
 }) {
   const startTime = Date.now();
   const repoName = path.basename(repoPath);
-  const repoKey = storage.repoKey(repoPath);
+  const repoKey = cacheKey ? storage.hashKey(cacheKey) : storage.repoKey(repoPath);
   const warnings = [];
   const metrics = createRepositoryMetrics();
 
   const richCommitsStartedAtMs = Date.now();
-  const commits = git.getRichCommits(repoPath, isAnalyzableFile);
+  const commits =
+    typeof git.getRichCommitsAsync === "function"
+      ? await git.getRichCommitsAsync(repoPath, isAnalyzableFile, { since })
+      : git.getRichCommits(repoPath, isAnalyzableFile);
   metrics.gitRichCommitsMs = Date.now() - richCommitsStartedAtMs;
   const totalCommits = commits.length;
 
@@ -375,11 +419,18 @@ async function analyzeSingleRepository({
   const rawAuthors = git
     .getAllAuthors(repoPath)
     .concat(commits.map((commit) => commit.committerRaw));
-  const authorIdentity = buildAuthorNormalizer(rawAuthors);
+  const authorIdentity = buildAuthorNormalizer(rawAuthors, {
+    style: authorStyle,
+  });
   const normalizeAuthor = authorIdentity.normalize;
 
   storage.ensureRepo(repoKey);
-  const latest = storage.loadLatestCheckpoint(repoKey);
+  const existingMeta = storage.readJson(storage.metaFile(repoKey), null);
+  const sameConfig =
+    existingMeta &&
+    (existingMeta.authorStyle || "short") === authorStyle &&
+    (existingMeta.since || null) === (since || null);
+  const latest = sameConfig ? findResumableCheckpoint(storage, repoKey) : null;
 
   let startIndex = 0;
   let repoScores = {};
@@ -412,9 +463,13 @@ async function analyzeSingleRepository({
       return { repoName, checkpoints: [], warnings, metrics };
     }
   } else {
+    storage.resetRepo(repoKey);
+    storage.ensureRepo(repoKey);
     storage.saveMeta(repoKey, {
       repo: repoName,
       repoPath,
+      authorStyle,
+      since: since || null,
       authorMap: authorIdentity.mapping,
       generatedAt: new Date().toISOString(),
     });
@@ -422,7 +477,10 @@ async function analyzeSingleRepository({
 
   console.log(`🔍 [${repoName}] Querying file mutations via git adapter...`);
   const historyChangesStartedAtMs = Date.now();
-  const commitHistoryChangesMap = git.getCommitHistoryChangesMap(repoPath);
+  const commitHistoryChangesMap =
+    typeof git.getCommitHistoryChangesMapAsync === "function"
+      ? await git.getCommitHistoryChangesMapAsync(repoPath)
+      : git.getCommitHistoryChangesMap(repoPath);
   metrics.gitCommitHistoryChangesMapMs =
     Date.now() - historyChangesStartedAtMs;
 
@@ -439,6 +497,7 @@ async function analyzeSingleRepository({
     repoName,
     repoKey,
     repoPath,
+    git,
     storage,
     tasks: ownershipTasks,
     fileWorkers,
@@ -469,6 +528,7 @@ async function analyzeSingleRepository({
           const normalizedOwnership = await resolveOwnershipForCommitFile({
             repoKey,
             repoPath,
+            git,
             storage,
             filePath,
             commitHash: commit.hash,
@@ -529,6 +589,7 @@ async function analyzeSingleRepository({
           const normalizedOwnership = await resolveOwnershipForCommitFile({
             repoKey,
             repoPath,
+            git,
             storage,
             filePath: item.newPath,
             commitHash: commit.hash,
@@ -555,6 +616,7 @@ async function analyzeSingleRepository({
     }
 
     const isLastCommit = idx === totalCommits - 1;
+    const persistActiveState = isLastCommit || (idx + 1) % 500 === 0;
 
     const checkpoint = {
       index: idx,
@@ -564,7 +626,7 @@ async function analyzeSingleRepository({
       committer: normalizeAuthor(commit.committerRaw),
       changes: commit.changes,
       scores: cloneScores(repoScores),
-      ...(isLastCommit
+      ...(persistActiveState
         ? { activeFileStates: Object.fromEntries(activeFileStates) }
         : {}),
     };
@@ -616,10 +678,7 @@ function streamCompositeTimelineToDisk(storage, repoKeys, repoPaths, outputFile)
 
       const files = fs
         .readdirSync(dir)
-        .filter(
-          (fileName) =>
-            fileName.startsWith("commit_") && fileName.endsWith(".json")
-        )
+        .filter((fileName) => /^\d+\.json$/.test(fileName))
         .sort((a, b) => a.localeCompare(b));
 
       for (const file of files) {
@@ -667,11 +726,23 @@ async function analyzeRepositories({
   fileWorkers = 4,
   repoWorkers = 2,
   debug = false,
+  authorStyle = "short",
+  format = "v1",
+  maxAuthors = 100,
+  maxSteps = 3000,
+  includeOthers = false,
+  repoLabel = null,
+  since = null,
+  cacheKey = null,
 }) {
   const startedAt = Date.now();
   const git = new LocalGitAdapter();
   const storage = new FsStorageAdapter(cacheDir);
-  const repoKeys = repoPaths.map((repoPath) => storage.repoKey(repoPath));
+  const repoKeyFor = (repoPath) =>
+    cacheKey && repoPaths.length === 1
+      ? storage.hashKey(cacheKey)
+      : storage.repoKey(repoPath);
+  const repoKeys = repoPaths.map(repoKeyFor);
 
   const safeRepoWorkers = Math.max(1, Math.floor(repoWorkers));
   const workerCount = Math.min(safeRepoWorkers, repoPaths.length);
@@ -689,11 +760,46 @@ async function analyzeRepositories({
         storage,
         fileWorkers,
         debug,
+        authorStyle,
+        since,
+        cacheKey: cacheKey && repoPaths.length === 1 ? cacheKey : null,
       });
     }
   }
 
   await Promise.all(Array.from({ length: workerCount }, () => repoWorker()));
+
+  if (format === "v2") {
+    if (repoPaths.length !== 1) {
+      throw new Error("--format v2 supports exactly one repository.");
+    }
+    console.log(`🧮 Building compact v2 export...`);
+    const repoPath = repoPaths[0];
+    const repoKey = repoKeys[0];
+    let sha = null;
+    try {
+      sha = git.runGit(repoPath, ["rev-parse", "HEAD"]);
+    } catch (_error) {}
+
+    const payload = buildCompactV2({
+      readCheckpoints: () => iterateCheckpointFiles(storage, repoKey),
+      repoLabel: path.basename(repoPath),
+      repoSlug: repoLabel || path.basename(repoPath),
+      sha,
+      maxAuthors,
+      maxSteps,
+      includeOthers,
+    });
+    writeCompactV2File(outputFile, payload);
+    console.log(
+      `📦 Compact export written to ${outputFile} (${payload.stats.steps} steps, ${payload.stats.authorsShown}/${payload.stats.authorsTotal} authors)`
+    );
+    return {
+      outputFile,
+      timelineLength: payload.stats.steps,
+      stats: payload.stats,
+    };
+  }
 
   console.log(`🧮 Compiling global analytics timeline straight to disk stream...`);
   const streamStartedAtMs = Date.now();

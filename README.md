@@ -13,7 +13,27 @@
   - **Quarterly Conquered:** Quarter-by-quarter rounds and growth comparisons.
 - **Contributor Customization & Identity Merging:** Customize contributor display names, colors, initials, and avatars, or merge multiple Git author aliases in **Settings**.
 - **Responsive & Mobile-Friendly:** Desktop/tablet sidebar and collapsible mobile bottom-sheet leaderboard with touch pan, pinch-to-zoom, and double-tap camera follow.
-- **100% Local Processing:** Your source code never leaves your machine. The analyzer script extracts only commit dates, author names, and surviving line counts into a JSON file that you load in the browser.
+- **Instant Public Repo Showcase:** Visitors can pick from pre-analyzed famous open-source repositories in one click (or open `#/r/<owner>/<repo>` directly) without cloning or running any local script.
+- **100% Local Processing for Your Own Code:** When analyzing private repos, your source code never leaves your machine. The analyzer script extracts only commit dates, author names, and surviving line counts into a JSON file that you load in the browser.
+
+---
+
+## Try Public Repositories (Showcase)
+
+When `/demos/index.json` is published on the site, visitors see a gallery of famous open-source repositories right on startup and can switch between them via the **Famous Repos** button or direct deep links such as:
+
+- `#/r/sindresorhus/chalk`
+- `#/r/tj/commander.js`
+- `#/r/expressjs/express`
+
+Showcase datasets use a compact v2 timeline format generated automatically on a weekly schedule by [`.github/workflows/refresh-showcase.yml`](./.github/workflows/refresh-showcase.yml) from the curated list in [`showcase/repos.json`](./showcase/repos.json).
+
+To test the showcase locally using `public/demos/` (git-ignored):
+
+```bash
+node tools/showcase/analyze-one.js --repo sindresorhus/chalk --out-dir ./demos-tmp
+node tools/showcase/build-index.js --config showcase/repos.json --artifacts-dir ./demos-tmp --out-dir public/demos
+```
 
 ---
 
@@ -59,6 +79,7 @@ Copy `public/config.example.js` to `public/config.js` to customize optional sett
 | :--- | :--- |
 | `window.AMPLITUDE_API_KEY` | Optional Amplitude Browser SDK API key. When empty (default), analytics runs in silent/no-op mode. |
 | `window.CNC_API_BASE_URL` | Optional backend URL for generating shareable links (`#/s/<id>`). When unset on localhost or custom domains, the Share button is hidden. |
+| `window.CNC_DEMOS_BASE_URL` | Optional base URL for pre-computed showcase files (default: `"demos/"`). |
 | `window.CNC_DEFAULT_REPO` | Default repository key when a snapshot omits `repo` (default: `"main"`). |
 | `window.CNC_PRIORITY_PLAYERS` | Optional array of contributor names to place near island centers. |
 
@@ -74,7 +95,11 @@ Copy `public/config.example.js` to `public/config.js` to customize optional sett
 │   ├── config.example.js   # Example runtime configuration
 │   ├── styles/main.css     # Responsive desktop, tablet, and mobile styles
 │   └── scripts/            # Simulation, rendering, controls, settings, and import UI
-├── tools/cc_analyze/       # Node.js Git blame history analyzer CLI
+├── showcase/               # Curated list of public repos for the instant showcase
+│   └── repos.json
+├── tools/
+│   ├── cc_analyze/         # Node.js Git blame history analyzer CLI (v1 & compact v2)
+│   └── showcase/           # Showcase analyzer runner & manifest builder
 ├── generate-cnc-data.sh    # Fast parallel shell/awk Git blame history generator
 └── ci/deploy.sh            # S3 + CloudFront deployment script
 ```

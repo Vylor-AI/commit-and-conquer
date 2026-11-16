@@ -1,0 +1,173 @@
+name: Refresh Showcase Demos
+
+on:
+  schedule:
+    # Weekly refresh every Monday at 03:00 UTC
+    - cron: '0 3 * * 1'
+  push:
+    branches:
+      - develop
+      - master
+    paths:
+      - 'showcase/repos.json'
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'Optional single repo slug to refresh (e.g. sindresorhus/chalk)'
+        required: false
+        type: string
+      environment:
+        description: 'Target deployment environment (defaults from branch when omitted)'
+        required: false
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Load showcase repository list
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build job matrix
+        id: list
+        env:
+          ONLY_REPO: ${{ inputs.repo || '' }}
+        run: |
+          MATRIX=$(node -e '
+            const { loadShowcaseConfig } = require("./tools/showcase/showcaseUtils");
+            const entries = loadShowcaseConfig("showcase/repos.json", process.env.ONLY_REPO || "");
+            if (entries.length === 0) {
+              throw new Error("No matching showcase repositories found.");
+            }
+            process.stdout.write(JSON.stringify({ include: entries }));
+          ')
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  analyze:
+    name: Analyze ${{ matrix.slug }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore analyzer checkpoint cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: .cc_showcase_cache
+          key: showcase-v2-${{ matrix.id }}-${{ github.run_id }}
+          restore-keys: |
+            showcase-v2-${{ matrix.id }}-
+
+      - name: Analyze ${{ matrix.slug }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARGS=(
+            --repo "${{ matrix.slug }}"
+            --out-dir "demos-artifacts/${{ matrix.id }}"
+            --cache-dir ".cc_showcase_cache"
+            --max-authors "${{ matrix.maxAuthors }}"
+            --max-steps "${{ matrix.maxSteps }}"
+            --file-workers 8
+          )
+          if [ -n "${{ matrix.ref }}" ]; then
+            ARGS+=(--ref "${{ matrix.ref }}")
+          fi
+          if [ -n "${{ matrix.since }}" ]; then
+            ARGS+=(--since "${{ matrix.since }}")
+          fi
+          if [ -n "${{ matrix.description }}" ]; then
+            ARGS+=(--description "${{ matrix.description }}")
+          fi
+          node tools/showcase/analyze-one.js "${ARGS[@]}"
+
+      - name: Save analyzer checkpoint cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: .cc_showcase_cache
+          key: showcase-v2-${{ matrix.id }}-${{ github.run_id }}
+
+      - name: Upload demo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-${{ matrix.id }}
+          path: demos-artifacts/${{ matrix.id }}
+          retention-days: 3
+
+  publish:
+    name: Publish demos (${{ inputs.environment || (github.ref_name == 'master' && 'production' || 'staging') }})
+    needs: [prepare, analyze]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || (github.ref_name == 'master' && 'production' || 'staging') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download analyzed demo artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded-demos
+          pattern: demo-*
+        continue-on-error: true
+
+      - name: Fetch existing published demos (preserve any failed jobs)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || vars.AWS_DEFAULT_REGION }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET || vars.S3_BUCKET }}
+        run: |
+          mkdir -p previous-demos
+          aws s3 sync "s3://${S3_BUCKET}/demos/" previous-demos/ || true
+
+      - name: Assemble demos/index.json and validate privacy
+        run: |
+          node tools/showcase/build-index.js \
+            --config showcase/repos.json \
+            --artifacts-dir downloaded-demos \
+            --previous-dir previous-demos \
+            --out-dir demos-dist
+
+      - name: Sync demos/ to S3 and invalidate CloudFront
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || vars.AWS_DEFAULT_REGION }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET || vars.S3_BUCKET }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID || vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          export AWS_PAGER=""
+          aws s3 sync demos-dist/ "s3://${S3_BUCKET}/demos/" \
+            --delete \
+            --content-type "application/json; charset=utf-8" \
+            --cache-control "public, max-age=3600"
+          aws cloudfront create-invalidation \
+            --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+            --paths "/demos/*"

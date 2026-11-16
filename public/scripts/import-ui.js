@@ -68,7 +68,7 @@
     }
 
     if (typeof opts.onHistoryImported === "function") {
-      opts.onHistoryImported(history);
+      opts.onHistoryImported(history, "file_import");
       return true;
     }
 
@@ -242,6 +242,212 @@
     setStatus(statusNode, "Command copied.", "info");
   }
 
+  function styleCardButton(button, hovered) {
+    button.style.border = hovered
+      ? "1px solid rgba(129, 194, 255, 0.85)"
+      : "1px solid rgba(129, 194, 255, 0.3)";
+    button.style.background = hovered
+      ? "rgba(65, 120, 170, 0.28)"
+      : "rgba(11, 20, 35, 0.7)";
+  }
+
+  function buildShowcaseCard(entry, onSelect) {
+    const showcase = window.CNCShowcase;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("data-demo-card", `${entry.owner}/${entry.name}`);
+    button.style.display = "flex";
+    button.style.flexDirection = "column";
+    button.style.gap = "6px";
+    button.style.textAlign = "left";
+    button.style.padding = "10px 12px";
+    button.style.borderRadius = "10px";
+    button.style.color = "#e8f1ff";
+    button.style.cursor = "pointer";
+    button.style.font = "inherit";
+    button.style.transition = "all 120ms ease";
+    styleCardButton(button, false);
+
+    button.addEventListener("mouseenter", () => styleCardButton(button, true));
+    button.addEventListener("mouseleave", () => styleCardButton(button, false));
+    button.addEventListener("focus", () => styleCardButton(button, true));
+    button.addEventListener("blur", () => styleCardButton(button, false));
+
+    const head = document.createElement("div");
+    head.style.display = "flex";
+    head.style.alignItems = "center";
+    head.style.gap = "8px";
+
+    const avatar = document.createElement("img");
+    avatar.src =
+      entry.avatar || `https://github.com/${encodeURIComponent(entry.owner)}.png?size=64`;
+    avatar.alt = "";
+    avatar.width = 28;
+    avatar.height = 28;
+    avatar.loading = "lazy";
+    avatar.style.borderRadius = "50%";
+    avatar.style.flex = "none";
+    avatar.style.background = "rgba(129, 194, 255, 0.15)";
+    avatar.addEventListener("error", () => avatar.remove());
+
+    const title = document.createElement("div");
+    title.textContent = `${entry.owner}/${entry.name}`;
+    title.style.fontSize = "14px";
+    title.style.fontWeight = "700";
+    title.style.overflow = "hidden";
+    title.style.textOverflow = "ellipsis";
+    title.style.whiteSpace = "nowrap";
+
+    head.appendChild(avatar);
+    head.appendChild(title);
+    button.appendChild(head);
+
+    if (entry.description) {
+      const description = document.createElement("div");
+      description.textContent = entry.description;
+      description.style.fontSize = "12px";
+      description.style.lineHeight = "1.4";
+      description.style.color = "#a9bedc";
+      description.style.overflow = "hidden";
+      description.style.display = "-webkit-box";
+      description.style.setProperty("-webkit-line-clamp", "2");
+      description.style.setProperty("-webkit-box-orient", "vertical");
+      button.appendChild(description);
+    }
+
+    const facts = [];
+    const stars = showcase.formatCount(entry.stars);
+    if (stars) facts.push(`\u2605 ${stars}`);
+    const commits = showcase.formatCount(entry.commits);
+    if (commits) facts.push(`${commits} commits`);
+    const contributors = showcase.formatCount(entry.contributors);
+    if (contributors) facts.push(`${contributors} contributors`);
+    const from = showcase.yearOf(entry.firstCommit);
+    const to = showcase.yearOf(entry.lastCommit);
+    if (from && to) facts.push(from === to ? from : `${from}\u2013${to}`);
+
+    if (facts.length > 0) {
+      const meta = document.createElement("div");
+      meta.textContent = facts.join(" \u00b7 ");
+      meta.style.fontSize = "11px";
+      meta.style.color = "#8a97ad";
+      button.appendChild(meta);
+    }
+
+    button.addEventListener("click", () => onSelect(entry));
+    return button;
+  }
+
+  function mountShowcase(slot, ownDetails, subtitle, opts, statusNode) {
+    const showcase = window.CNCShowcase;
+    if (!showcase) return;
+
+    const loading = document.createElement("div");
+    loading.textContent = "Loading famous repositories\u2026";
+    loading.style.fontSize = "12px";
+    loading.style.color = "#8a97ad";
+    loading.style.margin = "0 0 14px";
+    slot.appendChild(loading);
+
+    let busy = false;
+    const cards = [];
+
+    async function playDemo(entry) {
+      if (busy) return;
+      busy = true;
+      cards.forEach((c) => {
+        c.disabled = true;
+        c.style.opacity = "0.6";
+      });
+
+      const label = `${entry.owner}/${entry.name}`;
+      setStatus(statusNode, `Loading ${label}\u2026`, "info");
+
+      try {
+        const { history } = await showcase.loadDemoHistory(entry, (progress) => {
+          setStatus(
+            statusNode,
+            `Loading ${label}\u2026 ${Math.round(progress * 100)}%`,
+            "info"
+          );
+        });
+
+        const source = `showcase:${label}`;
+        if (typeof opts.onHistoryImported === "function") {
+          opts.onHistoryImported(history, source);
+        } else if (typeof window.applyHistoryTimeline === "function") {
+          window.applyHistoryTimeline(history);
+        } else {
+          throw new Error("Timeline apply handler is not available.");
+        }
+
+        showcase.setDemoHash(entry);
+        hideImportOverlay();
+      } catch (error) {
+        console.warn("Showcase load failed:", error);
+        setStatus(
+          statusNode,
+          `Could not load ${label}. Check your connection and try again, or import your own file below.`,
+          "error"
+        );
+        cards.forEach((c) => {
+          c.disabled = false;
+          c.style.opacity = "1";
+        });
+      } finally {
+        busy = false;
+      }
+    }
+
+    showcase
+      .loadIndex()
+      .then((index) => {
+        // The overlay may have been closed while the manifest was loading.
+        if (!slot.isConnected) return;
+
+        slot.textContent = "";
+
+        const heading = document.createElement("h3");
+        heading.textContent = "Try it now \u2014 pick a famous repository";
+        heading.style.margin = "0 0 10px";
+        heading.style.fontSize = "15px";
+        heading.style.fontWeight = "700";
+        heading.style.color = "#dcecff";
+
+        const grid = document.createElement("div");
+        grid.style.display = "grid";
+        grid.style.gridTemplateColumns = "repeat(auto-fill, minmax(190px, 1fr))";
+        grid.style.gap = "10px";
+        grid.style.marginBottom = "14px";
+
+        index.repos.forEach((entry) => {
+          const card = buildShowcaseCard(entry, playDemo);
+          cards.push(card);
+          grid.appendChild(card);
+        });
+
+        slot.appendChild(heading);
+        slot.appendChild(grid);
+
+        const attribution = document.createElement("div");
+        attribution.textContent =
+          "Data derived from public commit history on GitHub. Not affiliated with the projects.";
+        attribution.style.fontSize = "11px";
+        attribution.style.color = "#7b8aa3";
+        attribution.style.marginBottom = "12px";
+        slot.appendChild(attribution);
+
+        subtitle.textContent =
+          "Watch a real repository battle instantly, or use your own data.";
+        ownDetails.open = false;
+      })
+      .catch((error) => {
+        // No showcase available (e.g. local dev): keep the manual import UI.
+        console.info("Showcase unavailable:", error && error.message);
+        slot.remove();
+      });
+  }
+
   function showImportOverlay(options) {
     const opts = options || {};
     if (document.getElementById(IMPORT_OVERLAY_ID)) return;
@@ -263,6 +469,8 @@
 
     const card = document.createElement("div");
     card.style.width = "min(700px, 94vw)";
+    card.style.maxHeight = "92vh";
+    card.style.overflowY = "auto";
     card.style.padding = "22px";
     card.style.borderRadius = "14px";
     card.style.border = "1px solid rgba(129, 194, 255, 0.35)";
@@ -429,11 +637,29 @@
 
     card.appendChild(title);
     card.appendChild(subtitle);
-    card.appendChild(guidanceSection);
-    card.appendChild(dropZone);
+
+    const showcaseSlot = document.createElement("div");
+
+    const ownDetails = document.createElement("details");
+    ownDetails.open = true;
+    const ownSummary = document.createElement("summary");
+    ownSummary.textContent = "Use your own repository";
+    ownSummary.style.cursor = "pointer";
+    ownSummary.style.margin = "0 0 12px";
+    ownSummary.style.fontSize = "14px";
+    ownSummary.style.fontWeight = "600";
+    ownSummary.style.color = "#cfe3ff";
+    ownDetails.appendChild(ownSummary);
+    ownDetails.appendChild(guidanceSection);
+    ownDetails.appendChild(dropZone);
+
+    card.appendChild(showcaseSlot);
+    card.appendChild(ownDetails);
     card.appendChild(statusNode);
     overlay.appendChild(card);
     document.body.appendChild(overlay);
+
+    mountShowcase(showcaseSlot, ownDetails, subtitle, opts, statusNode);
 
     const originalHide = hideImportOverlay;
     hideImportOverlay = function patchedHideImportOverlay() {
