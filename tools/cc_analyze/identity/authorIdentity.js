@@ -36,7 +36,59 @@ function splitName(raw) {
   return { first, lastInitial };
 }
 
-function buildAuthorNormalizer(rawAuthors) {
+function stripEmail(raw) {
+  return String(raw || "")
+    .replace(/\s*<[^>]*>\s*$/, "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+// Full-name style: "Jane Doe <jane@x.com>" and blame's "Jane Doe" both map to
+// "Jane Doe". Emails are dropped so they can never reach published output.
+// Case variants (e.g. "TJ Holowaychuk" vs "Tj Holowaychuk") unify to the most
+// common spelling in the repository.
+function buildFullNameNormalizer(rawAuthors) {
+  const countsByLower = new Map();
+
+  for (const raw of new Set(rawAuthors || [])) {
+    if (typeof raw !== "string") continue;
+    const cleaned = stripEmail(raw);
+    if (!cleaned) continue;
+    const lower = cleaned.toLowerCase();
+    let counts = countsByLower.get(lower);
+    if (!counts) {
+      counts = new Map();
+      countsByLower.set(lower, counts);
+    }
+    counts.set(cleaned, (counts.get(cleaned) || 0) + 1);
+  }
+
+  const canonicalByLower = new Map();
+  for (const [lower, counts] of countsByLower.entries()) {
+    let best = "";
+    let bestCount = -1;
+    for (const [variant, count] of counts.entries()) {
+      if (count > bestCount || (count === bestCount && variant < best)) {
+        best = variant;
+        bestCount = count;
+      }
+    }
+    if (best) canonicalByLower.set(lower, best);
+  }
+
+  function normalize(raw) {
+    const cleaned = stripEmail(raw);
+    if (!cleaned) return "Unknown";
+    return canonicalByLower.get(cleaned.toLowerCase()) || cleaned;
+  }
+  return { normalize, mapping: {} };
+}
+
+function buildAuthorNormalizer(rawAuthors, options = {}) {
+  if (options.style === "full") {
+    return buildFullNameNormalizer(rawAuthors);
+  }
+
   const uniqueRaw = Array.from(
     new Set((rawAuthors || []).filter((name) => typeof name === "string"))
   ).sort((a, b) => a.localeCompare(b));

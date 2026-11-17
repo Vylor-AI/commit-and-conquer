@@ -1,9 +1,10 @@
 const fs = require("fs");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const readline = require("readline");
+const { spawn, spawnSync } = require("child_process");
 
 const COMMIT_MARKER = "__CC_COMMIT__";
-const DEFAULT_MAX_BUFFER = 1024 * 1024 * 50;
+const DEFAULT_MAX_BUFFER = 1024 * 1024 * 512;
 
 class LocalGitAdapter {
   constructor() {
@@ -30,6 +31,46 @@ class LocalGitAdapter {
     }
 
     return (result.stdout || "").trim();
+  }
+
+  // Stream git stdout line-by-line so large histories never hit maxBuffer limits.
+  spawnGitLines(repoPath, args, onLine) {
+    return new Promise((resolve, reject) => {
+      const child = spawn("git", args, {
+        cwd: repoPath,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      const stderrChunks = [];
+      child.stderr.on("data", (chunk) => stderrChunks.push(chunk));
+
+      const rl = readline.createInterface({
+        input: child.stdout,
+        crlfDelay: Infinity,
+      });
+
+      rl.on("line", onLine);
+
+      let settled = false;
+      child.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        rl.close();
+        reject(err);
+      });
+
+      child.on("close", (code) => {
+        if (settled) return;
+        settled = true;
+        if (code !== 0) {
+          const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+          const cmd = `git ${args.join(" ")}`;
+          reject(new Error(stderr || `Command failed (${code}): ${cmd}`));
+          return;
+        }
+        resolve();
+      });
+    });
   }
 
   isGitRepo(repoPath) {
@@ -67,7 +108,7 @@ class LocalGitAdapter {
       "log",
       "--reverse",
       "--date=iso-strict",
-      `--pretty=format:${COMMIT_MARKER}%x1f%H%x1f%cI%x1f%an <%ae>`,
+      `--pretty=format:${COMMIT_MARKER}%x1f%H%x1f%cI%x1f%aN <%aE>`,
       "--numstat",
       "--",
     ]);
@@ -102,7 +143,7 @@ class LocalGitAdapter {
           hash: parts[1],
           date: parts[2],
           committerRaw: parts[3],
-          changes: 0,
+          changes: { added: 0, removed: 0 },
           analyzableFiles: 0,
         };
         continue;
@@ -127,11 +168,74 @@ class LocalGitAdapter {
 
       const additions = Number.parseInt(additionsRaw, 10);
       const deletions = Number.parseInt(deletionsRaw, 10);
-      const delta = (Number.isFinite(additions) ? additions : 0) + (Number.isFinite(deletions) ? deletions : 0);
 
       current.analyzableFiles += 1;
-      current.changes += delta;
+      current.changes.added += Number.isFinite(additions) ? additions : 0;
+      current.changes.removed += Number.isFinite(deletions) ? deletions : 0;
     }
+
+    flush();
+    return commits;
+  }
+
+  async getRichCommitsAsync(repoPath, isAnalyzableFile, options = {}) {
+    const args = [
+      "log",
+      "--reverse",
+      "--date=iso-strict",
+      `--pretty=format:${COMMIT_MARKER}%x1f%H%x1f%cI%x1f%aN <%aE>`,
+      "--numstat",
+    ];
+    if (options && typeof options.since === "string" && options.since.trim()) {
+      args.push(`--since=${options.since.trim()}`);
+    }
+    args.push("--");
+
+    const commits = [];
+    let current = null;
+
+    const flush = () => {
+      if (!current) return;
+      if (current.analyzableFiles > 0) {
+        commits.push({
+          hash: current.hash,
+          date: current.date,
+          committerRaw: current.committerRaw,
+          changes: current.changes,
+        });
+      }
+    };
+
+    await this.spawnGitLines(repoPath, args, (line) => {
+      if (!line) return;
+
+      if (line.startsWith(`${COMMIT_MARKER}\x1f`)) {
+        flush();
+        const parts = line.split("\x1f");
+        current = {
+          hash: parts[1],
+          date: parts[2],
+          committerRaw: parts[3],
+          changes: { added: 0, removed: 0 },
+          analyzableFiles: 0,
+        };
+        return;
+      }
+
+      if (!current) return;
+
+      const parts = line.split("\t");
+      if (parts.length < 3) return;
+
+      const filePath = this.normalizeNumstatPath(parts.slice(2).join("\t"));
+      if (!isAnalyzableFile(filePath)) return;
+
+      const additions = Number.parseInt(parts[0], 10);
+      const deletions = Number.parseInt(parts[1], 10);
+      current.analyzableFiles += 1;
+      current.changes.added += Number.isFinite(additions) ? additions : 0;
+      current.changes.removed += Number.isFinite(deletions) ? deletions : 0;
+    });
 
     flush();
     return commits;
@@ -173,8 +277,33 @@ class LocalGitAdapter {
     return map;
   }
 
+  async getCommitHistoryChangesMapAsync(repoPath) {
+    const map = new Map();
+    let currentHash = null;
+
+    await this.spawnGitLines(
+      repoPath,
+      ["log", "--reverse", "--name-status", "--pretty=format:COMMIT:%H", "--"],
+      (line) => {
+        if (!line) return;
+        if (line.startsWith("COMMIT:")) {
+          currentHash = line.slice("COMMIT:".length).trim();
+          map.set(currentHash, []);
+          return;
+        }
+        if (!currentHash) return;
+        const parsed = this.parseNameStatusDiff(line);
+        if (parsed) {
+          map.get(currentHash).push(parsed);
+        }
+      }
+    );
+
+    return map;
+  }
+
   getAllAuthors(repoPath) {
-    const output = this.runGit(repoPath, ["log", "--format=%an <%ae>"]);
+    const output = this.runGit(repoPath, ["log", "--format=%aN <%aE>"]);
     if (!output) return [];
     const unique = new Set();
     const authors = [];
@@ -261,7 +390,56 @@ class LocalGitAdapter {
       }
     }
 
-    return this.blameFileAtCommitWithCli(repoPath, commitHash, filePath);
+    return this.blameFileAtCommitWithCliAsync(repoPath, commitHash, filePath);
+  }
+
+  blameFileAtCommitWithCliAsync(repoPath, commitHash, filePath) {
+    return new Promise((resolve) => {
+      const counts = {};
+      let sawLine = false;
+      let remainder = "";
+
+      const child = spawn(
+        "git",
+        ["blame", commitHash, "--line-porcelain", "--", filePath],
+        { cwd: repoPath, stdio: ["ignore", "pipe", "ignore"] }
+      );
+
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => {
+        const text = remainder + chunk;
+        const lines = text.split("\n");
+        remainder = lines.pop() || "";
+
+        for (let i = 0; i < lines.length; i += 1) {
+          const line = lines[i];
+          if (line.startsWith("author ")) {
+            const clean = line.endsWith("\r") ? line.slice(7, -1) : line.slice(7);
+            const key = clean.trim() || "Unknown";
+            counts[key] = (counts[key] || 0) + 1;
+            sawLine = true;
+          }
+        }
+      });
+
+      child.on("error", () => resolve(null));
+      child.on("close", (code) => {
+        if (remainder.startsWith("author ")) {
+          const clean = remainder.endsWith("\r")
+            ? remainder.slice(7, -1)
+            : remainder.slice(7);
+          const key = clean.trim() || "Unknown";
+          counts[key] = (counts[key] || 0) + 1;
+          sawLine = true;
+        }
+        if (code !== 0 || !sawLine) {
+          resolve(null);
+          return;
+        }
+        const totalLines = Object.values(counts).reduce((acc, value) => acc + value, 0);
+        resolve({ counts, totalLines });
+      });
+    });
   }
 
   async blameFileAtCommitWithNodeGit(repoPath, commitHash, filePath) {

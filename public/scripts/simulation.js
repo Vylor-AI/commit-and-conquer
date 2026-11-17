@@ -465,6 +465,15 @@ let lastControlsState = {
   disabled: null,
 };
 
+function formatTimelineDate(rawDate) {
+  if (typeof rawDate !== "string" || !rawDate) return "";
+  const isoMatch = rawDate.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]} ${isoMatch[2]}`;
+  }
+  return rawDate;
+}
+
 function updateControlsUI(force = false) {
   const maxVal = Math.max(0, historyTimeline.length - 1);
   if (force || lastControlsState.max !== maxVal) {
@@ -505,7 +514,7 @@ function updateControlsUI(force = false) {
   }
 
   let step = historyTimeline[currentFrameIndex];
-  const nextDate = step ? step.date : "";
+  const nextDate = step ? formatTimelineDate(step.date) : "";
   if (counter && (force || lastControlsState.date !== nextDate)) {
     counter.textContent = nextDate;
     lastControlsState.date = nextDate;

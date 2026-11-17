@@ -67,9 +67,25 @@
       if (typeof window.showImportOverlay === "function") {
         window.showImportOverlay({
           allowDismiss: true,
-          onHistoryImported: (history) => {
+          onHistoryImported: (history, source) => {
+            if (source === "file_import") {
+              if (
+                window.CNCShare &&
+                typeof window.CNCShare.clearShareHashFromLocation === "function"
+              ) {
+                window.CNCShare.clearShareHashFromLocation();
+              }
+              if (window.CNCShowcase) {
+                if (typeof window.CNCShowcase.clearDemoHashFromLocation === "function") {
+                  window.CNCShowcase.clearDemoHashFromLocation();
+                }
+                if (typeof window.CNCShowcase.setActiveDemo === "function") {
+                  window.CNCShowcase.setActiveDemo(null);
+                }
+              }
+            }
             if (typeof window.applyImportedHistory === "function") {
-              window.applyImportedHistory(history);
+              window.applyImportedHistory(history, source);
             } else if (typeof applyHistoryTimeline === "function") {
               applyHistoryTimeline(history);
             }

@@ -20,7 +20,7 @@ fi
 S3_URI="s3://${S3_BUCKET}"
 
 echo "Syncing '${BUILD_DIR}/' to '${S3_URI}'..."
-aws s3 sync "${BUILD_DIR}/" "${S3_URI}" --delete
+aws s3 sync "${BUILD_DIR}/" "${S3_URI}" --delete --exclude "demos/*"
 
 echo "Creating CloudFront invalidation for paths: ${INVALIDATION_PATHS}"
 aws cloudfront create-invalidation \

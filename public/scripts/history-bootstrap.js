@@ -120,21 +120,55 @@
     }
   }
 
-  function showImportPrompt() {
-    sourceHistoryTimeline = [];
-    resetToEmptyState();
+  async function tryLoadDemoFromLocation() {
+    const showcase = window.CNCShowcase;
+    const ref = showcase && showcase.currentDemoRef();
+    if (!ref) return { hasDemoRef: false, history: [] };
+
+    try {
+      const entry = await showcase.findEntry(ref);
+      if (!entry) return { hasDemoRef: true, notFound: true, history: [] };
+
+      const { history } = await showcase.loadDemoHistory(entry);
+      return { hasDemoRef: true, entry, history };
+    } catch (error) {
+      console.warn("Showcase deep link failed.", error);
+      return { hasDemoRef: true, failed: true, history: [] };
+    }
+  }
+
+  function clearLocationHashesForFileImport() {
+    if (
+      window.CNCShare &&
+      typeof window.CNCShare.clearShareHashFromLocation === "function"
+    ) {
+      window.CNCShare.clearShareHashFromLocation();
+    }
+    if (window.CNCShowcase) {
+      if (typeof window.CNCShowcase.clearDemoHashFromLocation === "function") {
+        window.CNCShowcase.clearDemoHashFromLocation();
+      }
+      if (typeof window.CNCShowcase.setActiveDemo === "function") {
+        window.CNCShowcase.setActiveDemo(null);
+      }
+    }
+  }
+
+  function showImportPrompt(options) {
+    const promptOpts = options || {};
+    if (!promptOpts.keepCurrentState) {
+      sourceHistoryTimeline = [];
+      resetToEmptyState();
+    }
 
     if (window.ImportUI) {
       window.ImportUI.showImportOverlay({
         allowDismiss: true,
-        onHistoryImported: (history) => {
-          applyResolvedHistory(history, "file_import");
-
-          if (
-            window.CNCShare &&
-            typeof window.CNCShare.clearShareHashFromLocation === "function"
-          ) {
-            window.CNCShare.clearShareHashFromLocation();
+        onHistoryImported: (history, source) => {
+          const resolvedSource = source || "file_import";
+          applyResolvedHistory(history, resolvedSource);
+          if (resolvedSource === "file_import") {
+            clearLocationHashesForFileImport();
           }
         },
       });
@@ -142,9 +176,48 @@
   }
 
   async function initializeHistoryFlow() {
+    if (
+      window.CNCShowcase &&
+      typeof window.CNCShowcase.initializeRepoSwitcher === "function"
+    ) {
+      window.CNCShowcase.initializeRepoSwitcher(() => {
+        showImportPrompt({ keepCurrentState: true });
+      });
+    }
+
     const shared = await tryLoadSharedHistoryFromLocation();
     if (Array.isArray(shared.history) && shared.history.length > 0) {
       applyResolvedHistory(shared.history, "shared_link");
+      return;
+    }
+
+    const demo = await tryLoadDemoFromLocation();
+    if (demo.history.length > 0) {
+      if (
+        window.CNCShowcase &&
+        typeof window.CNCShowcase.setActiveDemo === "function"
+      ) {
+        window.CNCShowcase.setActiveDemo(demo.entry);
+      }
+      applyResolvedHistory(
+        demo.history,
+        `showcase:${demo.entry.owner}/${demo.entry.name}`
+      );
+      return;
+    }
+
+    if (demo.hasDemoRef) {
+      if (
+        window.CNCShare &&
+        typeof window.CNCShare.notifyShareLoadFailure === "function"
+      ) {
+        window.CNCShare.notifyShareLoadFailure(
+          demo.notFound
+            ? "That repository isn't in the showcase. Pick one below or import your own data."
+            : "Could not load that repository. Please try again or import your own data."
+        );
+      }
+      showImportPrompt();
       return;
     }
 
@@ -194,6 +267,17 @@
     window.showImportOverlay = window.ImportUI.showImportOverlay;
     window.hideImportOverlay = window.ImportUI.hideImportOverlay;
   }
+
+  window.addEventListener("hashchange", () => {
+    const demoRef =
+      window.CNCShowcase &&
+      typeof window.CNCShowcase.currentDemoRef === "function"
+        ? window.CNCShowcase.currentDemoRef()
+        : null;
+    if (demoRef) {
+      initializeHistoryFlow();
+    }
+  });
 
   window.loadBundledHistoryIfEnabled = loadBundledHistoryIfEnabledRefactored;
   window.initTimeline = initializeHistoryFlow;
