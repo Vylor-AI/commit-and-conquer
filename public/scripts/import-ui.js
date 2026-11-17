@@ -338,6 +338,23 @@
     return button;
   }
 
+  function createCollapsibleSection(summaryText, options) {
+    const opts = options || {};
+    const details = document.createElement("details");
+    details.open = Boolean(opts.open);
+
+    const summary = document.createElement("summary");
+    summary.textContent = summaryText;
+    summary.style.cursor = "pointer";
+    summary.style.margin = opts.margin || "0 0 12px";
+    summary.style.fontSize = opts.fontSize || "14px";
+    summary.style.fontWeight = opts.fontWeight || "600";
+    summary.style.color = opts.color || "#cfe3ff";
+
+    details.appendChild(summary);
+    return details;
+  }
+
   function mountShowcase(slot, ownDetails, subtitle, opts, statusNode) {
     const showcase = window.CNCShowcase;
     if (!showcase) return;
@@ -407,18 +424,22 @@
 
         slot.textContent = "";
 
-        const heading = document.createElement("h3");
-        heading.textContent = "Try it now \u2014 pick a famous repository";
-        heading.style.margin = "0 0 10px";
-        heading.style.fontSize = "15px";
-        heading.style.fontWeight = "700";
-        heading.style.color = "#dcecff";
+        const showcaseDetails = createCollapsibleSection(
+          "Try it now \u2014 pick a famous repository",
+          {
+            open: true,
+            margin: "0 0 10px",
+            fontSize: "15px",
+            fontWeight: "700",
+            color: "#dcecff",
+          }
+        );
 
         const grid = document.createElement("div");
         grid.style.display = "grid";
         grid.style.gridTemplateColumns = "repeat(auto-fill, minmax(190px, 1fr))";
         grid.style.gap = "10px";
-        grid.style.marginBottom = "14px";
+        grid.style.marginBottom = "12px";
 
         index.repos.forEach((entry) => {
           const card = buildShowcaseCard(entry, playDemo);
@@ -426,16 +447,16 @@
           grid.appendChild(card);
         });
 
-        slot.appendChild(heading);
-        slot.appendChild(grid);
-
         const attribution = document.createElement("div");
         attribution.textContent =
           "Data derived from public commit history on GitHub. Not affiliated with the projects.";
         attribution.style.fontSize = "11px";
         attribution.style.color = "#7b8aa3";
-        attribution.style.marginBottom = "12px";
-        slot.appendChild(attribution);
+        attribution.style.marginBottom = "14px";
+
+        showcaseDetails.appendChild(grid);
+        showcaseDetails.appendChild(attribution);
+        slot.appendChild(showcaseDetails);
 
         subtitle.textContent =
           "Watch a real repository battle instantly, or use your own data.";
@@ -640,16 +661,9 @@
 
     const showcaseSlot = document.createElement("div");
 
-    const ownDetails = document.createElement("details");
-    ownDetails.open = true;
-    const ownSummary = document.createElement("summary");
-    ownSummary.textContent = "Use your own repository";
-    ownSummary.style.cursor = "pointer";
-    ownSummary.style.margin = "0 0 12px";
-    ownSummary.style.fontSize = "14px";
-    ownSummary.style.fontWeight = "600";
-    ownSummary.style.color = "#cfe3ff";
-    ownDetails.appendChild(ownSummary);
+    const ownDetails = createCollapsibleSection("Use your own repository", {
+      open: true,
+    });
     ownDetails.appendChild(guidanceSection);
     ownDetails.appendChild(dropZone);
 
